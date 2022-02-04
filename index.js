@@ -1,28 +1,25 @@
 const path = require('path');
 const {readFileSync} = require('fs');
-const {compact, reduce, sample} = require('lodash');
+const {compact, reduce, sample, assign} = require('lodash');
 
-const ALL_ANSWERS = loadFile('answer-list');
-const ALL_GUESSES = ALL_ANSWERS.concat(loadFile('guess-list'));
-
+const VALID_ANSWERS = loadFile('answer-list');
+const VALID_NON_ANSWERS = loadFile('guess-list');
 
 class Solver {
   constructor() {
     this.guessCount = 0;
-    this.answers = [...ALL_ANSWERS];
+    this.answers = [...VALID_ANSWERS];
+
+    // // in case we want to recompute the initial best guess
     // this.setNextGuess();
 
     // shortcut, since optimal first guess will never change
     this.nextGuess = 'soare';
-
-    // if the first word must be in the answers
-    // this.nextGuess = 'raise';
-
     this.buckets = makeBuckets(this.nextGuess, this.answers);
   }
 
   /**
-   * Eliminates impossible solutions based on the response and
+   * Eliminates impossible solutions based on the response and sets the optimal next guess
    *
    * @param {string} response - a five-character string of 0s, 1s, and 2s representing the response.
    * 0 means not in answer, 1 means wrong position, 2 means correct letter and position
@@ -52,17 +49,16 @@ class Solver {
    * @return {string} - the next guess
    */
   setNextGuess(guess) {
-    if (!guess) {
-      const {guess, buckets} = getBestNextGuess(
-        this.answers,
-          {
-            // guess a valid answer if there are few enough remaining, otherwise allow full list
-            guesses: this.answers.length + this.guessCount <= 6 ? this.answers : undefined
-          }
-      );
+    if (!guess && this.guessCount) {
+      const {guess, buckets} = getBestNextGuess(this.answers);
       this.nextGuess = guess;
       this.buckets = buckets;
       return this.nextGuess;
+    }
+
+    // avoid recomputing initial best guess
+    if (!this.guessCount) {
+      guess = 'soare'
     }
 
     if(!/^[A-Za-z]{5}$/.test(guess)) {
@@ -76,25 +72,35 @@ class Solver {
 }
 
 module.exports = Solver;
+assign(Solver, {
+  VALID_NON_ANSWERS,
+  VALID_ANSWERS,
+  getBestNextGuess,
+  makeBuckets,
+  computeExpectedRemaining,
+  evaluateGuess,
+})
 
-function getBestNextGuess(answers, {guesses = ALL_GUESSES} = {}) {
+function getBestNextGuess(answers, {guesses = [...VALID_ANSWERS, ...VALID_NON_ANSWERS]} = {}) {
   let best;
-  let bestEntropy = -1;
+  let bestExpectedRemaining = Infinity;
   for (const guess of guesses) {
     const buckets = makeBuckets(guess, answers);
-    const entropy = reduce(buckets, (prev, candidates) => {
-      const p = candidates.length / answers.length;
-      return prev - p * Math.log2(p);
-    }, 0)
-    if (entropy > bestEntropy) {
-      best = [{guess, buckets}];
-      bestEntropy = entropy;
-    } else if (entropy === bestEntropy) {
-      best.push({guess, buckets});
+    const expectedRemaining = computeExpectedRemaining(buckets);
+
+    const data = {guess, buckets}
+    if (expectedRemaining < bestExpectedRemaining) {
+      best = [data];
+      bestExpectedRemaining = expectedRemaining;
+    } else if (expectedRemaining === bestExpectedRemaining) {
+      best.push(data);
     }
   }
 
-  return sample(best);
+  // tiebreaker: prioritize possible answers
+  const bestAnswers = best.filter(b => !!b.buckets['22222']);
+
+  return sample(bestAnswers) || sample(best);
 }
 
 function makeBuckets(guess, answers) {
@@ -105,6 +111,32 @@ function makeBuckets(guess, answers) {
   }
 
   return buckets;
+}
+
+/**
+ * Computes the metric used compare guesses.
+ *
+ * @param buckets
+ * @returns {number}
+ */
+function computeExpectedRemaining(buckets) {
+  const {'22222': answer, ...restBuckets} = buckets;
+
+  const {sumXLogX, total} = reduce(restBuckets, ({sumXLogX, total}, candidates) => {
+    const {length} = candidates;
+    total += length;
+    sumXLogX += length * Math.log2(length);
+    return {sumXLogX, total};
+  }, {sumXLogX: 0, total: 0} )
+
+  if (total === 0) {
+    return answer ? 0 : NaN;
+  }
+
+  const entropy = Math.log2(total) - sumXLogX / total
+  const powEntropy =  Math.pow(2, entropy);
+
+  return answer ? Math.pow(total, 2) / (total + 1) / powEntropy : total / powEntropy;
 }
 
 function evaluateGuess(answer, guess) {
