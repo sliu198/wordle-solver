@@ -34,7 +34,7 @@ class Solver {
     }
     const answers = this.buckets[response];
     if (!answers || !answers.length) {
-      throw new Error('Something has gone wrong!');
+      throw new Error('no answers remaining');
     }
     this.answers = answers;
 
