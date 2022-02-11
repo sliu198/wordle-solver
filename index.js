@@ -34,10 +34,9 @@ class Solver {
       throw new Error('no answers remaining');
     }
     this.answers = answers;
+    this.guessCount += 1;
 
     this.setNextGuess()
-
-    this.guessCount += 1;
     return this.nextGuess;
   }
 
